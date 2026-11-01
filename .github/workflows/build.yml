@@ -24,7 +24,7 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
-       - name: Install dependencies
+      - name: Install dependencies
         run: |
           brew install dpkg ldid
 
@@ -51,6 +51,7 @@ jobs:
       - name: Verify Debian package
         shell: bash
         run: |
+          shopt -s nullglob
           packages=(packages/*.deb)
 
           if [ ${#packages[@]} -ne 1 ]; then
@@ -61,10 +62,7 @@ jobs:
           PACKAGE="${packages[0]}"
 
           echo "Package: $PACKAGE"
-          echo "Architecture:"
           dpkg-deb -f "$PACKAGE" Architecture
-
-          echo "Package contents:"
           dpkg-deb -c "$PACKAGE"
 
           ARCH="$(dpkg-deb -f "$PACKAGE" Architecture)"
