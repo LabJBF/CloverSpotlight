@@ -24,6 +24,10 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
+       - name: Install dependencies
+        run: |
+          brew install dpkg ldid
+
       - name: Install RootHide Theos
         shell: bash
         run: |
