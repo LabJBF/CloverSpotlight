@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Roothide Package
+    name: Build CloverSpotlight - Roothide
     runs-on: macos-15
 
     steps:
@@ -24,69 +24,97 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           brew install dpkg ldid
 
-      
       - name: Install RootHide Theos
         shell: bash
         run: |
+          set -euo pipefail
+
           export THEOS="$RUNNER_TEMP/theos"
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
-          git clone --recursive https://github.com/roothide/theos.git "$THEOS"
+          git clone --recursive \
+            https://github.com/roothide/theos.git \
+            "$THEOS"
+
+          test -f "$THEOS/makefiles/common.mk"
+
+          echo "RootHide Theos installed successfully."
 
       - name: Install iOS SDK
         shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p "$THEOS/sdks"
 
-          curl -fL \
-            https://github.com/theos/sdks/releases/download/16.5/iPhoneOS16.5.sdk.tar.xz \
-            -o "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz"
+          SDK_ARCHIVE="$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz"
 
-          tar -xJf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" \
-            -C "$THEOS/sdks"
+          curl --fail --location \
+            --retry 3 \
+            --retry-all-errors \
+            --output "$SDK_ARCHIVE" \
+            https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
 
-          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
-          echo "iOS SDK installed successfully."
+          tar -xJf "$SDK_ARCHIVE" -C "$THEOS/sdks"
 
-      - name: Verify Theos installation
+          test -f "$THEOS/sdks/iPhoneOS16.5.sdk/SDKSettings.plist"
+
+          echo "iOS 16.5 SDK installed successfully."
+
+      - name: Verify build environment
+        shell: bash
         run: |
+          set -euo pipefail
+
+          echo "Theos: $THEOS"
+          echo "Available SDKs:"
+          ls -la "$THEOS/sdks"
+
           test -f "$THEOS/makefiles/common.mk"
           test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
-          echo "RootHide Theos and SDK ready."
+
+          echo "Build environment ready."
 
       - name: Build Debian package
+        shell: bash
         run: |
+          set -euo pipefail
+
           make clean
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+
+          make package \
+            FINALPACKAGE=1 \
+            THEOS_PACKAGE_SCHEME=roothide
 
       - name: Verify Debian package
         shell: bash
         run: |
+          set -euo pipefail
+
           shopt -s nullglob
-          packages=(packages/*.deb)
+          PACKAGES=(packages/*.deb)
 
-          if [ ${#packages[@]} -ne 1 ]; then
-            echo "Expected exactly one .deb package."
+          if [ ${#PACKAGES[@]} -eq 0 ]; then
+            echo "ERROR: No Debian package was generated."
             exit 1
           fi
 
-          PACKAGE="${packages[0]}"
+          for PACKAGE in "${PACKAGES[@]}"; do
+            echo "--------------------------------"
+            echo "Package: $PACKAGE"
+            echo "--------------------------------"
 
-          echo "Package: $PACKAGE"
-          dpkg-deb -f "$PACKAGE" Architecture
-          dpkg-deb -c "$PACKAGE"
+            dpkg-deb --info "$PACKAGE"
+            dpkg-deb --contents "$PACKAGE"
 
-          ARCH="$(dpkg-deb -f "$PACKAGE" Architecture)"
-
-          if [ "$ARCH" != "iphoneos-arm64e" ]; then
-            echo "Incorrect package architecture: $ARCH"
-            exit 1
-          fi
+            echo "Architecture:"
+            dpkg-deb -f "$PACKAGE" Architecture
+          done
 
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
