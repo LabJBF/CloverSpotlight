@@ -28,6 +28,7 @@ jobs:
         run: |
           brew install dpkg ldid
 
+      
       - name: Install RootHide Theos
         shell: bash
         run: |
@@ -35,13 +36,28 @@ jobs:
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
+          git clone --recursive https://github.com/roothide/theos.git "$THEOS"
+
+      - name: Install iOS SDK
+        shell: bash
+        run: |
+          mkdir -p "$THEOS/sdks"
+
+          curl -fL \
+            https://github.com/theos/sdks/releases/download/16.5/iPhoneOS16.5.sdk.tar.xz \
+            -o "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz"
+
+          tar -xJf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" \
+            -C "$THEOS/sdks"
+
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+          echo "iOS SDK installed successfully."
 
       - name: Verify Theos installation
         run: |
           test -f "$THEOS/makefiles/common.mk"
-          test -d "$THEOS/sdks"
-          echo "RootHide Theos installed successfully."
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+          echo "RootHide Theos and SDK ready."
 
       - name: Build Debian package
         run: |
