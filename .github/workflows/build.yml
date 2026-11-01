@@ -1,8 +1,10 @@
+
 name: Build CloverSpotlight
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Compile iOS Tweak
+    name: Build Roothide Package
     runs-on: macos-15
 
     steps:
@@ -22,29 +24,56 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
-      - name: Install dependencies
+      - name: Install RootHide Theos
+        shell: bash
         run: |
-          brew install ldid
+          export THEOS="$RUNNER_TEMP/theos"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
 
-      - name: Install Theos
-        run: |
-          git clone --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
-          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/theos/bin" >> "$GITHUB_PATH"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
 
-      - name: Prepare SDK directory
+      - name: Verify Theos installation
         run: |
-          mkdir -p "$RUNNER_TEMP/theos/sdks"
+          test -f "$THEOS/makefiles/common.mk"
+          test -d "$THEOS/sdks"
+          echo "RootHide Theos installed successfully."
 
       - name: Build Debian package
         run: |
           make clean
-          make package FINALPACKAGE=1
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+
+      - name: Verify Debian package
+        shell: bash
+        run: |
+          packages=(packages/*.deb)
+
+          if [ ${#packages[@]} -ne 1 ]; then
+            echo "Expected exactly one .deb package."
+            exit 1
+          fi
+
+          PACKAGE="${packages[0]}"
+
+          echo "Package: $PACKAGE"
+          echo "Architecture:"
+          dpkg-deb -f "$PACKAGE" Architecture
+
+          echo "Package contents:"
+          dpkg-deb -c "$PACKAGE"
+
+          ARCH="$(dpkg-deb -f "$PACKAGE" Architecture)"
+
+          if [ "$ARCH" != "iphoneos-arm64e" ]; then
+            echo "Incorrect package architecture: $ARCH"
+            exit 1
+          fi
 
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
         with:
-          name: CloverSpotlight-deb
+          name: CloverSpotlight-Roothide
           path: packages/*.deb
           if-no-files-found: error
           retention-days: 14
