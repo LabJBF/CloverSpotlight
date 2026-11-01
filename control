@@ -1,0 +1,9 @@
+Package: com.macclover.cloverspotlight
+Name: CloverSpotlight
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Description: Native Spotlight integration research tweak for SpringBoard.
+Maintainer: Mac.Clover
+Author: Mac.Clover
+Section: Tweaks
+Depends: firmware (>= 15.0), ellekit
