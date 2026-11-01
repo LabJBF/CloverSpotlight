@@ -4,135 +4,88 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 
-// ======================================================
-// CloverSpotlight 0.1.1
-// Runtime Diagnostics
-// Target: iOS 27.0 / SpringBoard
-// ======================================================
+static NSString *const kLogPath =
+    @"/var/mobile/Library/Logs/CloverSpotlight.log";
 
-static void CSLogMethod(Class cls, BOOL classMethod, SEL selector) {
-    if (!cls || !selector) {
-        return;
+static void CSLog(NSString *message) {
+    NSString *entry = [NSString stringWithFormat:
+        @"[%@] %@\n",
+        [NSDate date],
+        message
+    ];
+
+    NSFileHandle *file =
+        [NSFileHandle fileHandleForWritingAtPath:kLogPath];
+
+    if (!file) {
+        [[NSFileManager defaultManager]
+            createFileAtPath:kLogPath
+            contents:nil
+            attributes:nil];
+
+        file = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
     }
 
-    Method method = classMethod
-        ? class_getClassMethod(cls, selector)
-        : class_getInstanceMethod(cls, selector);
-
-    if (method) {
-        NSLog(@"[CloverSpotlight] FOUND %@ %@ | Encoding: %s",
-              classMethod ? @"CLASS" : @"INSTANCE",
-              NSStringFromSelector(selector),
-              method_getTypeEncoding(method));
-    } else {
-        NSLog(@"[CloverSpotlight] MISSING %@ %@",
-              classMethod ? @"CLASS" : @"INSTANCE",
-              NSStringFromSelector(selector));
+    if (file) {
+        [file seekToEndOfFile];
+        [file writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+        [file closeFile];
     }
+
+    NSLog(@"[CloverSpotlight] %@", message);
 }
 
-static void CSInspectRuntime(void) {
-    NSLog(@"[CloverSpotlight] ===== Runtime Diagnostics =====");
+static void CSInspectSpotlight(void) {
+    CSLog(@"Starting Spotlight diagnostics");
 
-    // 1. Load SpotlightUI framework.
-    const char *frameworkPath =
-        "/System/Library/PrivateFrameworks/SpotlightUI.framework/SpotlightUI";
+    void *framework = dlopen(
+        "/System/Library/PrivateFrameworks/SpotlightUI.framework/SpotlightUI",
+        RTLD_LAZY
+    );
 
-    void *framework = dlopen(frameworkPath, RTLD_LAZY);
+    CSLog(framework
+        ? @"SpotlightUI framework loaded"
+        : @"SpotlightUI framework could not be loaded");
 
-    if (framework) {
-        NSLog(@"[CloverSpotlight] SpotlightUI loaded successfully.");
-    } else {
-        const char *error = dlerror();
+    NSArray *classes = @[
+        @"SPUISpotlightSceneManager",
+        @"SPUISpotlightRemoteViewController",
+        @"SPUISearchViewSceneSpecification"
+    ];
 
-        NSLog(@"[CloverSpotlight] SpotlightUI load failed: %s",
-              error ? error : "Unknown error");
+    for (NSString *name in classes) {
+        Class cls = NSClassFromString(name);
+
+        CSLog([NSString stringWithFormat:@"%@: %@",
+            name,
+            cls ? @"AVAILABLE" : @"NOT FOUND"
+        ]);
     }
 
-    // 2. Resolve native classes.
-    Class managerClass =
-        NSClassFromString(@"SPUISpotlightSceneManager");
+    Class manager = NSClassFromString(@"SPUISpotlightSceneManager");
 
-    Class remoteControllerClass =
-        NSClassFromString(@"SPUISpotlightRemoteViewController");
+    if (manager) {
+        SEL selector = @selector(sharedManager);
 
-    Class sceneSpecificationClass =
-        NSClassFromString(@"SPUISearchViewSceneSpecification");
-
-    NSLog(@"[CloverSpotlight] SPUISpotlightSceneManager: %@",
-          managerClass ? @"AVAILABLE" : @"NOT FOUND");
-
-    NSLog(@"[CloverSpotlight] SPUISpotlightRemoteViewController: %@",
-          remoteControllerClass ? @"AVAILABLE" : @"NOT FOUND");
-
-    NSLog(@"[CloverSpotlight] SPUISearchViewSceneSpecification: %@",
-          sceneSpecificationClass ? @"AVAILABLE" : @"NOT FOUND");
-
-    // 3. Inspect Scene Manager.
-    if (managerClass) {
-        CSLogMethod(managerClass, YES, @selector(sharedManager));
-
-        CSLogMethod(managerClass, NO,
-            @selector(launchSpotlightIfNeededWithForegroundPriority:));
-
-        CSLogMethod(managerClass, NO, @selector(addScene:));
-        CSLogMethod(managerClass, NO, @selector(removeScene:));
-        CSLogMethod(managerClass, NO, @selector(applyAssertionAsNeeded));
+        CSLog([NSString stringWithFormat:
+            @"sharedManager: %@",
+            [manager respondsToSelector:selector]
+                ? @"AVAILABLE"
+                : @"NOT FOUND"
+        ]);
     }
 
-    // 4. Inspect Remote View Controller.
-    if (remoteControllerClass) {
-        CSLogMethod(remoteControllerClass, NO,
-            @selector(initWithSceneIdentifier:));
-
-        CSLogMethod(remoteControllerClass, NO,
-            @selector(createSceneIfNeededWithPriority:));
-
-        CSLogMethod(remoteControllerClass, NO,
-            @selector(createSceneWithPriority:));
-
-        CSLogMethod(remoteControllerClass, NO,
-            @selector(setForeground:));
-
-        CSLogMethod(remoteControllerClass, NO,
-            @selector(sceneSpecification));
-
-        CSLogMethod(remoteControllerClass, NO,
-            @selector(setHostView:));
-
-        CSLogMethod(remoteControllerClass, NO,
-            @selector(setPresenter:));
-    }
-
-    // 5. Inspect Scene Specification.
-    if (sceneSpecificationClass) {
-        CSLogMethod(sceneSpecificationClass, NO,
-            @selector(settingsClass));
-
-        CSLogMethod(sceneSpecificationClass, NO,
-            @selector(clientSettingsClass));
-
-        CSLogMethod(sceneSpecificationClass, NO,
-            @selector(transitionContextClass));
-    }
-
-    NSLog(@"[CloverSpotlight] ===== Diagnostics Complete =====");
+    CSLog(@"Spotlight diagnostics finished");
 }
 
 %ctor {
     @autoreleasepool {
-        NSString *processName =
-            [[NSProcessInfo processInfo] processName];
+        CSLog(@"CloverSpotlight 0.1.0 LOADED");
+        CSLog([NSString stringWithFormat:
+            @"Process: %@",
+            [[NSProcessInfo processInfo] processName]
+        ]);
 
-        NSLog(@"[CloverSpotlight] Loaded into process: %@",
-              processName);
-
-        // Wait until SpringBoard has finished its initial startup.
-        dispatch_after(
-            dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
-            dispatch_get_main_queue(), ^{
-                CSInspectRuntime();
-            }
-        );
+        CSInspectSpotlight();
     }
 }
