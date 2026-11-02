@@ -1,54 +1,84 @@
-# CloverSpotlight
+# Nyxian Spotlight
 
-A Theos/Logos tweak scaffold for researching native Spotlight integration on iOS/iPadOS.
+**Nyxian Spotlight** is an experimental Theos/Logos tweak exploring native Spotlight integration in the SwitchZart environment.
 
-**Current status: scaffold only.** Version 0.1.0 confirms injection into SpringBoard by logging a constructor message. It does not yet present Spotlight or hook private APIs.
+The repository and tweak target are named **CloverSpotlight**; the Debian package is distributed as **Nyxian Spotlight** (\`com.nyxian.spotlight\`).
 
-## Target
+> **Experimental status:** version 0.1.6 is a research build. Runtime investigation has identified relevant Spotlight classes and a callable manager selector, but the native Spotlight interface has not yet been successfully presented. A successful build or method call does not mean Spotlight is working.
 
-- Development host: Ubuntu
-- Build system: Theos
-- Tweak language: Objective-C / Logos
-- Injection target: `com.apple.springboard` / `SpringBoard`
-- Initial package scheme: rootless
-- Architectures: `arm64`, `arm64e`
+## Project status
 
-The target device/environment must be tested independently. A successful package build does not prove that ElleKit injects the tweak or that private APIs are available.
+| Area | Status |
+| --- | --- |
+| Theos package build | Implemented |
+| RootHide package scheme | Configured |
+| arm64e target | Configured |
+| Spotlight runtime investigation | In progress |
+| Native Spotlight presentation | Not working yet |
+| General device compatibility | Not established |
 
-## Ubuntu setup
+## Test environment
 
-```bash
-chmod +x scripts/*.sh
-./scripts/install-ubuntu-deps.sh
-./scripts/install-theos.sh
-```
+The current investigation has been performed on:
 
-Configure an iOS SDK supported by your Theos installation. Then open a new terminal and verify:
+- iPad (10th generation, arm64e)
+- iPadOS 27.0 beta 4
+- SwitchZart with RootHide / Procursus
 
-```bash
-echo "$THEOS"
-which make
-```
+These are test conditions, not a compatibility guarantee. Other devices, iOS/iPadOS versions, and SwitchZart builds may behave differently.
+
+## Technical notes
+
+The investigation focuses on Apple's private Spotlight-related frameworks and runtime components, including \`SpotlightUI.framework\`.
+
+Classes observed during research include:
+
+- \`SPUISpotlightSceneManager\`
+- \`SPUISpotlightRemoteViewController\`
+- \`SPUISearchViewSceneSpecification\`
+- \`SPUISearchViewSceneSettings\`
+- \`SPUISearchViewSceneTransitionContext\`
+
+The shared manager and the selector \`launchSpotlightIfNeededWithForegroundPriority:\` were found to be available at runtime. Calling the selector has not produced visible Spotlight UI so far.
+
+Class and selector availability alone do not establish that an API is safe or sufficient to present the interface. The scene lifecycle, required context, and presentation path still need to be understood. Avoid adding guessed selectors or forcing undocumented scene-creation methods.
 
 ## Build
 
-```bash
+This project uses Theos and Logos.
+
+The GitHub Actions workflow builds the Debian package. Check the workflow run and its artifacts for the generated \`.deb\`.
+
+For a local build, configure a compatible Theos installation and SDK, then run:
+
+\`\`\`sh
 make clean
-make package
-```
+make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+\`\`\`
 
-The resulting `.deb` is normally written to `packages/`.
+The package is generated in \`packages/\`.
 
-## Install
+## Installation and troubleshooting
 
-Transfer the package to the test device and install it with the package manager. Keep a way to remove the package if SpringBoard becomes unstable.
+Only install experimental builds on a test environment where you can recover from a SpringBoard issue. Keep a known removal method available before installing.
 
-## Next engineering steps
+A successful package installation does not prove that:
 
-1. Confirm package architecture and install paths for the exact SwitchZart/Procursus setup.
-2. Verify that the constructor log appears in SpringBoard.
-3. Obtain and inspect the exact iOS 27.0 headers for SpotlightUI, SpotlightUIInternalFramework, SearchUI, and SpringBoard.
-4. Verify class and selector availability at runtime before adding any Logos hook.
-5. Integrate native Spotlight UI only after its lifecycle and presentation path are understood.
+- the tweak is injected into SpringBoard;
+- the required private framework APIs are available;
+- Spotlight's scene can be created;
+- the native interface will become visible.
 
-Do not add guessed selectors or call private methods based only on class names.
+When reporting an issue, include the device model, exact iOS/iPadOS and SwitchZart versions, package version, and relevant \`NyxianSpotlight.log\` output. Do not include personal data or secrets in logs.
+
+## Roadmap
+
+- [ ] Improve runtime diagnostics and logging.
+- [ ] Understand the native Spotlight scene lifecycle.
+- [ ] Identify the supported presentation path for the target environment.
+- [ ] Verify behavior across additional SwitchZart and iOS/iPadOS builds.
+- [ ] Present the native Spotlight interface reliably.
+
+## Disclaimer
+
+This project is an independent research effort and is not affiliated with or endorsed by Apple. Spotlight and related framework names are Apple trademarks. Private APIs are undocumented and may change or stop working at any time.
