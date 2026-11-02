@@ -13,6 +13,24 @@ static NSString *const kLogPath =
 // MARK: - Logging
 
 static void CSLog(NSString *message) {
+    NSFileManager *fileManager =
+        [NSFileManager defaultManager];
+
+    NSString *directory =
+        [kLogPath stringByDeletingLastPathComponent];
+
+    NSError *directoryError = nil;
+
+    [fileManager createDirectoryAtPath:directory
+          withIntermediateDirectories:YES
+                           attributes:nil
+                                error:&directoryError];
+
+    if (directoryError) {
+        NSLog(@"[CloverSpotlight] Log directory error: %@",
+              directoryError);
+    }
+
     NSString *entry = [NSString stringWithFormat:
         @"[%@] %@\n",
         [NSDate date],
@@ -23,19 +41,20 @@ static void CSLog(NSString *message) {
         [NSFileHandle fileHandleForWritingAtPath:kLogPath];
 
     if (!file) {
-        [[NSFileManager defaultManager]
-            createFileAtPath:kLogPath
-            contents:nil
-            attributes:nil];
+        [fileManager createFileAtPath:kLogPath
+                             contents:nil
+                           attributes:nil];
 
         file = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
     }
 
     if (file) {
         [file seekToEndOfFile];
+
         [file writeData:
             [entry dataUsingEncoding:NSUTF8StringEncoding]
         ];
+
         [file closeFile];
     }
 
@@ -194,7 +213,7 @@ static void CSInspectSpotlight(void) {
         ]);
     }
 
-    // Reference the function without executing it.
+    // Reference without executing the launch function.
     (void)&CSRequestNativeSpotlight;
 
     CSLog(@"Native Spotlight request function is ready");
