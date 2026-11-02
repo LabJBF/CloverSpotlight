@@ -1,9 +1,9 @@
-Package: com.macoldfriend.nyxianspotlight
-Name: Nyxian Spotlight
+Package: com.macclover.cloverspotlight
+Name: CloverSpotlight
 Version: 0.1.2
-Architecture: iphoneos-arm64e
-Description: Native Spotlight integration research tweak for SpringBoard.
-Maintainer: Oldfriend
-Author: Oldfriend
+Architecture: iphoneos-arm64
+Description: Native Spotlight launcher for iOS and iPadOS.
+Maintainer: Mac.Clover
+Author: Mac.Clover
 Section: Tweaks
-Depends: firmware (>= 15.0), ellekit
+Depends: mobilesubstrate
