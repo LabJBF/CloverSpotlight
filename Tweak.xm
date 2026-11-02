@@ -5,8 +5,12 @@
 #import <objc/message.h>
 #import <dlfcn.h>
 
+// MARK: - Configuration
+
 static NSString *const kLogPath =
     @"/var/mobile/Library/Logs/CloverSpotlight.log";
+
+// MARK: - Logging
 
 static void CSLog(NSString *message) {
     NSString *entry = [NSString stringWithFormat:
@@ -29,7 +33,9 @@ static void CSLog(NSString *message) {
 
     if (file) {
         [file seekToEndOfFile];
-        [file writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+        [file writeData:
+            [entry dataUsingEncoding:NSUTF8StringEncoding]
+        ];
         [file closeFile];
     }
 
@@ -64,12 +70,68 @@ static BOOL CSLoadSpotlightFramework(void) {
     return loaded;
 }
 
+// MARK: - Native Spotlight Request
+
+static BOOL CSRequestNativeSpotlight(void) {
+    CSLog(@"Native Spotlight launch requested");
+
+    if (!CSLoadSpotlightFramework()) {
+        CSLog(@"Framework unavailable");
+        return NO;
+    }
+
+    Class managerClass =
+        NSClassFromString(@"SPUISpotlightSceneManager");
+
+    if (!managerClass) {
+        CSLog(@"SceneManager unavailable");
+        return NO;
+    }
+
+    SEL sharedSelector = @selector(sharedManager);
+
+    if (![managerClass respondsToSelector:sharedSelector]) {
+        CSLog(@"sharedManager selector unavailable");
+        return NO;
+    }
+
+    id manager =
+        ((id (*)(id, SEL))objc_msgSend)(
+            managerClass,
+            sharedSelector
+        );
+
+    if (!manager) {
+        CSLog(@"sharedManager returned nil");
+        return NO;
+    }
+
+    SEL launchSelector =
+        @selector(launchSpotlightIfNeededWithForegroundPriority:);
+
+    if (![manager respondsToSelector:launchSelector]) {
+        CSLog(@"Native launch selector unavailable");
+        return NO;
+    }
+
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(
+        manager,
+        launchSelector,
+        YES
+    );
+
+    CSLog(@"Native Spotlight launch method invoked");
+
+    return YES;
+}
+
 // MARK: - Diagnostics
 
 static void CSInspectSpotlight(void) {
     CSLog(@"Starting Spotlight diagnostics");
 
     if (!CSLoadSpotlightFramework()) {
+        CSLog(@"Diagnostics stopped: framework unavailable");
         return;
     }
 
@@ -116,13 +178,13 @@ static void CSInspectSpotlight(void) {
                 sharedSelector
             );
 
-        SEL launchSelector =
-            @selector(launchSpotlightIfNeededWithForegroundPriority:);
-
         CSLog([NSString stringWithFormat:
             @"Manager instance: %@",
             manager ? @"AVAILABLE" : @"NIL"
         ]);
+
+        SEL launchSelector =
+            @selector(launchSpotlightIfNeededWithForegroundPriority:);
 
         CSLog([NSString stringWithFormat:
             @"Native launch selector: %@",
@@ -132,62 +194,11 @@ static void CSInspectSpotlight(void) {
         ]);
     }
 
+    // Reference the function without executing it.
+    (void)&CSRequestNativeSpotlight;
+
+    CSLog(@"Native Spotlight request function is ready");
     CSLog(@"Spotlight diagnostics finished");
-}
-
-// MARK: - Native Spotlight Request
-
-static BOOL CSRequestNativeSpotlight(void) {
-    CSLog(@"Native Spotlight launch requested");
-
-    if (!CSLoadSpotlightFramework()) {
-        CSLog(@"Cannot request Spotlight: framework unavailable");
-        return NO;
-    }
-
-    Class managerClass =
-        NSClassFromString(@"SPUISpotlightSceneManager");
-
-    if (!managerClass) {
-        CSLog(@"Cannot request Spotlight: manager unavailable");
-        return NO;
-    }
-
-    SEL sharedSelector = @selector(sharedManager);
-
-    if (![managerClass respondsToSelector:sharedSelector]) {
-        CSLog(@"sharedManager selector unavailable");
-        return NO;
-    }
-
-    id manager =
-        ((id (*)(id, SEL))objc_msgSend)(
-            managerClass,
-            sharedSelector
-        );
-
-    if (!manager) {
-        CSLog(@"sharedManager returned nil");
-        return NO;
-    }
-
-    SEL launchSelector =
-        @selector(launchSpotlightIfNeededWithForegroundPriority:);
-
-    if (![manager respondsToSelector:launchSelector]) {
-        CSLog(@"Native launch selector unavailable");
-        return NO;
-    }
-
-    ((void (*)(id, SEL, BOOL))objc_msgSend)(
-        manager,
-        launchSelector,
-        YES
-    );
-
-    CSLog(@"Native Spotlight launch method invoked");
-
-    return YES;
 }
 
 // MARK: - Constructor
