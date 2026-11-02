@@ -11,6 +11,8 @@ static NSString *const kLogPath =
 static NSString *const kTriggerPath =
     @"/var/mobile/Library/CloverSpotlight/launch";
 
+static dispatch_source_t gTriggerTimer = nil;
+
 static void CSLog(NSString *message) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *directory = [kLogPath stringByDeletingLastPathComponent];
@@ -59,6 +61,25 @@ static BOOL CSLoadSpotlightFramework(void) {
     });
 
     return loaded;
+}
+
+static id CSGetObjectProperty(id object, SEL selector) {
+    if (!object || ![object respondsToSelector:selector]) {
+        return nil;
+    }
+
+    return ((id (*)(id, SEL))objc_msgSend)(object, selector);
+}
+
+static void CSLogObjectProperty(id object,
+                                NSString *label,
+                                SEL selector) {
+    id value = CSGetObjectProperty(object, selector);
+
+    CSLog([NSString stringWithFormat:
+           @"%@ = %@",
+           label,
+           value ? [value description] : @"NIL"]);
 }
 
 static void CSInspectClass(Class cls) {
@@ -117,6 +138,142 @@ static void CSInspectClass(Class cls) {
     free(properties);
 }
 
+static NSArray *CSObjectsFromCollection(id collection) {
+    if (!collection) return @[];
+
+    if ([collection isKindOfClass:[NSHashTable class]]) {
+        return [(NSHashTable *)collection allObjects] ?: @[];
+    }
+
+    if ([collection isKindOfClass:[NSArray class]]) {
+        return (NSArray *)collection;
+    }
+
+    CSLog([NSString stringWithFormat:
+           @"Unknown collection type: %@",
+           NSStringFromClass([collection class])]);
+
+    return @[];
+}
+
+static void CSInspectSceneObject(id object, NSUInteger index) {
+    if (!object) return;
+
+    CSLog([NSString stringWithFormat:
+           @"--- SCENE OBJECT %lu ---",
+           (unsigned long)index]);
+
+    CSLog([NSString stringWithFormat:
+           @"Object class: %@",
+           NSStringFromClass([object class])]);
+
+    CSLog([NSString stringWithFormat:
+           @"Object description: %@",
+           [object description]]);
+
+    CSLogObjectProperty(object, @"sceneIdentifier",
+                        @selector(sceneIdentifier));
+
+    CSLogObjectProperty(object, @"scene",
+                        @selector(scene));
+
+    CSLogObjectProperty(object, @"presenter",
+                        @selector(presenter));
+
+    CSLogObjectProperty(object, @"hostView",
+                        @selector(hostView));
+
+    CSLogObjectProperty(object, @"foregroundScenes",
+                        @selector(foregroundScenes));
+}
+
+static void CSInspectManagerState(void) {
+    CSLog(@"========== SPOTLIGHT STATE BEGIN ==========");
+
+    Class managerClass =
+        NSClassFromString(@"SPUISpotlightSceneManager");
+
+    if (!managerClass) {
+        CSLog(@"Manager class unavailable");
+        return;
+    }
+
+    id manager =
+        CSGetObjectProperty(managerClass, @selector(sharedManager));
+
+    if (!manager) {
+        CSLog(@"Shared manager is NIL");
+        return;
+    }
+
+    CSLog([NSString stringWithFormat:
+           @"Manager: %@",
+           NSStringFromClass([manager class])]);
+
+    id managedScenes =
+        CSGetObjectProperty(manager, @selector(managedScenes));
+
+    id foregroundScenes =
+        CSGetObjectProperty(manager, @selector(foregroundScenes));
+
+    id processHandle =
+        CSGetObjectProperty(manager, @selector(spotlightProcessHandle));
+
+    CSLog([NSString stringWithFormat:
+           @"Managed scenes collection: %@",
+           managedScenes ?: @"NIL"]);
+
+    CSLog([NSString stringWithFormat:
+           @"Foreground scenes collection: %@",
+           foregroundScenes ?: @"NIL"]);
+
+    CSLog([NSString stringWithFormat:
+           @"Spotlight process handle: %@",
+           processHandle ?: @"NIL"]);
+
+    NSArray *managed = CSObjectsFromCollection(managedScenes);
+    NSArray *foreground = CSObjectsFromCollection(foregroundScenes);
+
+    CSLog([NSString stringWithFormat:
+           @"Managed scene count: %lu",
+           (unsigned long)managed.count]);
+
+    CSLog([NSString stringWithFormat:
+           @"Foreground scene count: %lu",
+           (unsigned long)foreground.count]);
+
+    for (NSUInteger i = 0; i < managed.count; i++) {
+        CSInspectSceneObject(managed[i], i);
+    }
+
+    CSLog(@"========== FOREGROUND OBJECTS ==========");
+
+    for (NSUInteger i = 0; i < foreground.count; i++) {
+        CSInspectSceneObject(foreground[i], i);
+    }
+
+    CSLog(@"========== SPOTLIGHT STATE END ==========");
+}
+
+static void CSScheduleStateInspection(void) {
+    NSArray *delays = @[@1, @3, @6];
+
+    for (NSNumber *delay in delays) {
+        dispatch_after(
+            dispatch_time(DISPATCH_TIME_NOW,
+                          (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
+            dispatch_get_main_queue(),
+            ^{
+                CSLog([NSString stringWithFormat:
+                       @"Running state inspection after %@ seconds",
+                       delay]);
+
+                CSInspectManagerState();
+            }
+        );
+    }
+}
+
 static void CSInspectSpotlight(void) {
     CSLog(@"Starting extended Spotlight inspection");
 
@@ -159,8 +316,6 @@ static void CSInspectSpotlight(void) {
                manager ? NSStringFromClass([manager class]) : @"NIL"]);
 
         if (manager) {
-            CSInspectClass([manager class]);
-
             SEL launchSelector =
                 @selector(launchSpotlightIfNeededWithForegroundPriority:);
 
@@ -182,11 +337,17 @@ static BOOL CSRequestNativeSpotlight(void) {
     Class managerClass =
         NSClassFromString(@"SPUISpotlightSceneManager");
 
-    if (!managerClass) return NO;
+    if (!managerClass) {
+        CSLog(@"Manager class not found");
+        return NO;
+    }
 
     SEL sharedSelector = @selector(sharedManager);
 
-    if (![managerClass respondsToSelector:sharedSelector]) return NO;
+    if (![managerClass respondsToSelector:sharedSelector]) {
+        CSLog(@"sharedManager selector unavailable");
+        return NO;
+    }
 
     id manager =
         ((id (*)(id, SEL))objc_msgSend)(
@@ -194,12 +355,18 @@ static BOOL CSRequestNativeSpotlight(void) {
             sharedSelector
         );
 
-    if (!manager) return NO;
+    if (!manager) {
+        CSLog(@"Manager instance is NIL");
+        return NO;
+    }
 
     SEL launchSelector =
         @selector(launchSpotlightIfNeededWithForegroundPriority:);
 
-    if (![manager respondsToSelector:launchSelector]) return NO;
+    if (![manager respondsToSelector:launchSelector]) {
+        CSLog(@"Launch selector unavailable");
+        return NO;
+    }
 
     CSLog(@"Calling native launch method");
 
@@ -210,6 +377,10 @@ static BOOL CSRequestNativeSpotlight(void) {
     );
 
     CSLog(@"Native launch method returned");
+    CSLog(@"Scheduling post-launch state inspections");
+
+    CSScheduleStateInspection();
+
     CSLog(@"NOTE: UI presentation has not been verified");
 
     return YES;
@@ -234,7 +405,7 @@ static void CSInstallManualTrigger(void) {
         return;
     }
 
-    dispatch_source_t timer =
+    gTriggerTimer =
         dispatch_source_create(
             DISPATCH_SOURCE_TYPE_TIMER,
             0,
@@ -242,26 +413,27 @@ static void CSInstallManualTrigger(void) {
             dispatch_get_main_queue()
         );
 
-    if (!timer) {
+    if (!gTriggerTimer) {
         CSLog(@"Timer creation failed");
         return;
     }
 
     dispatch_source_set_timer(
-        timer,
+        gTriggerTimer,
         dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
         NSEC_PER_SEC,
         100 * NSEC_PER_MSEC
     );
 
-    dispatch_source_set_event_handler(timer, ^{
+    dispatch_source_set_event_handler(gTriggerTimer, ^{
         if (![fm fileExistsAtPath:kTriggerPath]) return;
 
         CSLog(@"Manual trigger detected");
 
         [fm removeItemAtPath:kTriggerPath error:nil];
 
-        dispatch_source_cancel(timer);
+        dispatch_source_cancel(gTriggerTimer);
+        gTriggerTimer = nil;
 
         BOOL result = CSRequestNativeSpotlight();
 
@@ -270,14 +442,14 @@ static void CSInstallManualTrigger(void) {
             : @"Native method invocation failed");
     });
 
-    dispatch_resume(timer);
+    dispatch_resume(gTriggerTimer);
 
     CSLog(@"Manual trigger installed");
 }
 
 %ctor {
     @autoreleasepool {
-        CSLog(@"CloverSpotlight 0.1.3 LOADED");
+        CSLog(@"CloverSpotlight 0.1.4 LOADED");
 
         CSLog([NSString stringWithFormat:
                @"Process: %@",
