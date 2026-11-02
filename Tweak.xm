@@ -5,56 +5,39 @@
 #import <objc/message.h>
 #import <dlfcn.h>
 
-// MARK: - Configuration
-
 static NSString *const kLogPath =
     @"/var/mobile/Library/Logs/CloverSpotlight.log";
 
 static NSString *const kTriggerPath =
     @"/var/mobile/Library/CloverSpotlight/launch";
 
-// MARK: - Logging
-
 static void CSLog(NSString *message) {
     NSFileManager *fm = [NSFileManager defaultManager];
-
-    NSString *directory =
-        [kLogPath stringByDeletingLastPathComponent];
+    NSString *directory = [kLogPath stringByDeletingLastPathComponent];
 
     [fm createDirectoryAtPath:directory
   withIntermediateDirectories:YES
                    attributes:nil
                         error:nil];
 
-    NSString *entry = [NSString stringWithFormat:
-        @"[%@] %@\n",
-        [NSDate date],
-        message
-    ];
+    NSString *entry = [NSString stringWithFormat:@"[%@] %@\n",
+                       [NSDate date], message];
+
+    if (![fm fileExistsAtPath:kLogPath]) {
+        [fm createFileAtPath:kLogPath contents:nil attributes:nil];
+    }
 
     NSFileHandle *file =
         [NSFileHandle fileHandleForWritingAtPath:kLogPath];
 
-    if (!file) {
-        [fm createFileAtPath:kLogPath
-                    contents:nil
-                  attributes:nil];
-
-        file = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
-    }
-
     if (file) {
         [file seekToEndOfFile];
-        [file writeData:
-            [entry dataUsingEncoding:NSUTF8StringEncoding]
-        ];
+        [file writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
         [file closeFile];
     }
 
     NSLog(@"[CloverSpotlight] %@", message);
 }
-
-// MARK: - Framework
 
 static BOOL CSLoadSpotlightFramework(void) {
     static BOOL loaded = NO;
@@ -62,50 +45,148 @@ static BOOL CSLoadSpotlightFramework(void) {
 
     dispatch_once(&onceToken, ^{
         const char *path =
-            "/System/Library/PrivateFrameworks/SpotlightUI.framework/SpotlightUI";
+        "/System/Library/PrivateFrameworks/SpotlightUI.framework/SpotlightUI";
 
-        void *framework = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
 
-        if (framework) {
+        if (handle) {
             loaded = YES;
-            CSLog(@"SpotlightUI framework loaded successfully");
+            CSLog(@"SpotlightUI framework loaded");
         } else {
-            const char *error = dlerror();
-
             CSLog([NSString stringWithFormat:
-                @"Framework loading failed: %s",
-                error ?: "Unknown error"
-            ]);
+                   @"Framework error: %s", dlerror() ?: "Unknown"]);
         }
     });
 
     return loaded;
 }
 
-// MARK: - Native Spotlight
+static void CSInspectClass(Class cls) {
+    if (!cls) return;
 
-static BOOL CSRequestNativeSpotlight(void) {
-    CSLog(@"Attempting native Spotlight launch");
+    CSLog([NSString stringWithFormat:
+           @"===== CLASS: %@ =====", NSStringFromClass(cls)]);
 
-    if (!CSLoadSpotlightFramework()) {
-        CSLog(@"Launch aborted: framework unavailable");
-        return NO;
+    unsigned int count = 0;
+
+    Method *methods = class_copyMethodList(cls, &count);
+
+    for (unsigned int i = 0; i < count; i++) {
+        SEL selector = method_getName(methods[i]);
+        const char *encoding = method_getTypeEncoding(methods[i]);
+
+        NSString *name = NSStringFromSelector(selector);
+
+        if ([name localizedCaseInsensitiveContainsString:@"spotlight"] ||
+            [name localizedCaseInsensitiveContainsString:@"scene"] ||
+            [name localizedCaseInsensitiveContainsString:@"launch"] ||
+            [name localizedCaseInsensitiveContainsString:@"present"] ||
+            [name localizedCaseInsensitiveContainsString:@"foreground"] ||
+            [name localizedCaseInsensitiveContainsString:@"create"]) {
+
+            CSLog([NSString stringWithFormat:
+                   @"METHOD: %@ | encoding: %s",
+                   name, encoding ?: "unknown"]);
+        }
+    }
+
+    free(methods);
+
+    Ivar *ivars = class_copyIvarList(cls, &count);
+
+    for (unsigned int i = 0; i < count; i++) {
+        const char *name = ivar_getName(ivars[i]);
+
+        if (name) {
+            CSLog([NSString stringWithFormat:@"IVAR: %s", name]);
+        }
+    }
+
+    free(ivars);
+
+    objc_property_t *properties = class_copyPropertyList(cls, &count);
+
+    for (unsigned int i = 0; i < count; i++) {
+        const char *name = property_getName(properties[i]);
+
+        if (name) {
+            CSLog([NSString stringWithFormat:@"PROPERTY: %s", name]);
+        }
+    }
+
+    free(properties);
+}
+
+static void CSInspectSpotlight(void) {
+    CSLog(@"Starting extended Spotlight inspection");
+
+    if (!CSLoadSpotlightFramework()) return;
+
+    NSArray *names = @[
+        @"SPUISpotlightSceneManager",
+        @"SPUISpotlightRemoteViewController",
+        @"SPUISearchViewSceneSpecification",
+        @"SPUISearchViewSceneSettings",
+        @"SPUISearchViewSceneTransitionContext"
+    ];
+
+    for (NSString *name in names) {
+        Class cls = NSClassFromString(name);
+
+        CSLog([NSString stringWithFormat:
+               @"%@ : %@",
+               name, cls ? @"AVAILABLE" : @"NOT FOUND"]);
+
+        if (cls) {
+            CSInspectClass(cls);
+        }
     }
 
     Class managerClass =
         NSClassFromString(@"SPUISpotlightSceneManager");
 
-    if (!managerClass) {
-        CSLog(@"Launch aborted: SceneManager unavailable");
-        return NO;
+    if (managerClass &&
+        [managerClass respondsToSelector:@selector(sharedManager)]) {
+
+        id manager =
+            ((id (*)(id, SEL))objc_msgSend)(
+                managerClass,
+                @selector(sharedManager)
+            );
+
+        CSLog([NSString stringWithFormat:
+               @"Manager instance: %@",
+               manager ? NSStringFromClass([manager class]) : @"NIL"]);
+
+        if (manager) {
+            CSInspectClass([manager class]);
+
+            SEL launchSelector =
+                @selector(launchSpotlightIfNeededWithForegroundPriority:);
+
+            CSLog([NSString stringWithFormat:
+                   @"Launch selector available: %@",
+                   [manager respondsToSelector:launchSelector]
+                       ? @"YES" : @"NO"]);
+        }
     }
+
+    CSLog(@"Extended inspection finished");
+}
+
+static BOOL CSRequestNativeSpotlight(void) {
+    CSLog(@"Requesting native Spotlight");
+
+    if (!CSLoadSpotlightFramework()) return NO;
+
+    Class managerClass =
+        NSClassFromString(@"SPUISpotlightSceneManager");
+
+    if (!managerClass) return NO;
 
     SEL sharedSelector = @selector(sharedManager);
 
-    if (![managerClass respondsToSelector:sharedSelector]) {
-        CSLog(@"Launch aborted: sharedManager unavailable");
-        return NO;
-    }
+    if (![managerClass respondsToSelector:sharedSelector]) return NO;
 
     id manager =
         ((id (*)(id, SEL))objc_msgSend)(
@@ -113,20 +194,14 @@ static BOOL CSRequestNativeSpotlight(void) {
             sharedSelector
         );
 
-    if (!manager) {
-        CSLog(@"Launch aborted: manager returned nil");
-        return NO;
-    }
+    if (!manager) return NO;
 
     SEL launchSelector =
         @selector(launchSpotlightIfNeededWithForegroundPriority:);
 
-    if (![manager respondsToSelector:launchSelector]) {
-        CSLog(@"Launch aborted: launch selector unavailable");
-        return NO;
-    }
+    if (![manager respondsToSelector:launchSelector]) return NO;
 
-    CSLog(@"Invoking native launch selector");
+    CSLog(@"Calling native launch method");
 
     ((void (*)(id, SEL, BOOL))objc_msgSend)(
         manager,
@@ -134,12 +209,11 @@ static BOOL CSRequestNativeSpotlight(void) {
         YES
     );
 
-    CSLog(@"Native launch selector returned");
+    CSLog(@"Native launch method returned");
+    CSLog(@"NOTE: UI presentation has not been verified");
 
     return YES;
 }
-
-// MARK: - Manual Trigger
 
 static void CSInstallManualTrigger(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -156,17 +230,9 @@ static void CSInstallManualTrigger(void) {
 
     if (error) {
         CSLog([NSString stringWithFormat:
-            @"Trigger directory error: %@",
-            error
-        ]);
+               @"Trigger directory error: %@", error]);
         return;
     }
-
-    CSLog(@"Manual trigger installed");
-    CSLog([NSString stringWithFormat:
-        @"Waiting for trigger file: %@",
-        kTriggerPath
-    ]);
 
     dispatch_source_t timer =
         dispatch_source_create(
@@ -177,7 +243,7 @@ static void CSInstallManualTrigger(void) {
         );
 
     if (!timer) {
-        CSLog(@"Could not create trigger timer");
+        CSLog(@"Timer creation failed");
         return;
     }
 
@@ -189,11 +255,9 @@ static void CSInstallManualTrigger(void) {
     );
 
     dispatch_source_set_event_handler(timer, ^{
-        if (![fm fileExistsAtPath:kTriggerPath]) {
-            return;
-        }
+        if (![fm fileExistsAtPath:kTriggerPath]) return;
 
-        CSLog(@"Manual launch trigger detected");
+        CSLog(@"Manual trigger detected");
 
         [fm removeItemAtPath:kTriggerPath error:nil];
 
@@ -202,93 +266,22 @@ static void CSInstallManualTrigger(void) {
         BOOL result = CSRequestNativeSpotlight();
 
         CSLog(result
-            ? @"Launch method invocation completed"
-            : @"Launch method invocation failed"
-        );
+            ? @"Native method invocation completed"
+            : @"Native method invocation failed");
     });
 
     dispatch_resume(timer);
+
+    CSLog(@"Manual trigger installed");
 }
-
-// MARK: - Diagnostics
-
-static void CSInspectSpotlight(void) {
-    CSLog(@"Starting Spotlight diagnostics");
-
-    if (!CSLoadSpotlightFramework()) {
-        CSLog(@"Diagnostics stopped");
-        return;
-    }
-
-    NSArray *classes = @[
-        @"SPUISpotlightSceneManager",
-        @"SPUISpotlightRemoteViewController",
-        @"SPUISearchViewSceneSpecification",
-        @"SPUISearchViewSceneSettings",
-        @"SPUISearchViewSceneTransitionContext"
-    ];
-
-    for (NSString *name in classes) {
-        Class cls = NSClassFromString(name);
-
-        CSLog([NSString stringWithFormat:
-            @"%@ : %@",
-            name,
-            cls ? @"AVAILABLE" : @"NOT FOUND"
-        ]);
-    }
-
-    Class managerClass =
-        NSClassFromString(@"SPUISpotlightSceneManager");
-
-    if (managerClass) {
-        SEL sharedSelector = @selector(sharedManager);
-
-        BOOL available =
-            [managerClass respondsToSelector:sharedSelector];
-
-        CSLog([NSString stringWithFormat:
-            @"sharedManager: %@",
-            available ? @"AVAILABLE" : @"NOT FOUND"
-        ]);
-
-        if (available) {
-            id manager =
-                ((id (*)(id, SEL))objc_msgSend)(
-                    managerClass,
-                    sharedSelector
-                );
-
-            CSLog([NSString stringWithFormat:
-                @"Manager instance: %@",
-                manager ? @"AVAILABLE" : @"NIL"
-            ]);
-
-            SEL launchSelector =
-                @selector(launchSpotlightIfNeededWithForegroundPriority:);
-
-            CSLog([NSString stringWithFormat:
-                @"Native launch selector: %@",
-                [manager respondsToSelector:launchSelector]
-                    ? @"AVAILABLE"
-                    : @"NOT FOUND"
-            ]);
-        }
-    }
-
-    CSLog(@"Spotlight diagnostics finished");
-}
-
-// MARK: - Constructor
 
 %ctor {
     @autoreleasepool {
-        CSLog(@"CloverSpotlight 0.1.2 LOADED");
+        CSLog(@"CloverSpotlight 0.1.3 LOADED");
 
         CSLog([NSString stringWithFormat:
-            @"Process: %@",
-            [[NSProcessInfo processInfo] processName]
-        ]);
+               @"Process: %@",
+               [[NSProcessInfo processInfo] processName]]);
 
         CSInspectSpotlight();
         CSInstallManualTrigger();
