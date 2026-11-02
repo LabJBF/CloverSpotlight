@@ -1,6 +1,6 @@
 Package: com.nyxian.spotlight
 Name: Nyxian Spotlight
-Version: 0.1.5
+Version: 0.1.6
 Architecture: iphoneos-arm64
 Description: Native Spotlight integration for the Switzach environment.
 Maintainer: Nyxian Community
