@@ -6,10 +6,10 @@
 #import <dlfcn.h>
 
 static NSString *const kLogPath =
-    @"/var/mobile/Library/Logs/CloverSpotlight.log";
+    @"/var/mobile/Library/Logs/NyxianSpotlight.log";
 
 static NSString *const kTriggerPath =
-    @"/var/mobile/Library/CloverSpotlight/launch";
+    @"/var/mobile/Library/NyxianSpotlight/launch";
 
 static dispatch_source_t gTriggerTimer = nil;
 
@@ -38,7 +38,7 @@ static void CSLog(NSString *message) {
         [file closeFile];
     }
 
-    NSLog(@"[CloverSpotlight] %@", message);
+    NSLog(@"[NyxianSpotlight] %@", message);
 }
 
 static BOOL CSLoadSpotlightFramework(void) {
@@ -449,7 +449,7 @@ static void CSInstallManualTrigger(void) {
 
 %ctor {
     @autoreleasepool {
-        CSLog(@"CloverSpotlight 0.1.4 LOADED");
+        CSLog(@"Nyxian Spotlight 0.1.4 LOADED");
 
         CSLog([NSString stringWithFormat:
                @"Process: %@",
