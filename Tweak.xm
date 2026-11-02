@@ -13,6 +13,8 @@ static NSString *const kTriggerPath =
 
 static dispatch_source_t gTriggerTimer = nil;
 
+// MARK: - Logging
+
 static void CSLog(NSString *message) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *directory = [kLogPath stringByDeletingLastPathComponent];
@@ -41,6 +43,8 @@ static void CSLog(NSString *message) {
     NSLog(@"[NyxianSpotlight] %@", message);
 }
 
+// MARK: - Framework
+
 static BOOL CSLoadSpotlightFramework(void) {
     static BOOL loaded = NO;
     static dispatch_once_t onceToken;
@@ -62,6 +66,8 @@ static BOOL CSLoadSpotlightFramework(void) {
 
     return loaded;
 }
+
+// MARK: - Runtime Helpers
 
 static id CSGetObjectProperty(id object, SEL selector) {
     if (!object || ![object respondsToSelector:selector]) {
@@ -98,6 +104,67 @@ static void CSLogObjectProperty(id object,
                NSStringFromClass([value class])]);
     }
 }
+
+// Safely reads an existing object ivar without modifying it.
+static id CSGetObjectIvar(id object, const char *ivarName) {
+    if (!object || !ivarName) return nil;
+
+    Ivar ivar = class_getInstanceVariable(
+        object_getClass(object),
+        ivarName
+    );
+
+    if (!ivar) {
+        Class cls = [object class];
+
+        while (cls && !ivar) {
+            ivar = class_getInstanceVariable(cls, ivarName);
+            cls = class_getSuperclass(cls);
+        }
+    }
+
+    if (!ivar) {
+        CSLog([NSString stringWithFormat:
+               @"IVAR NOT FOUND: %s", ivarName]);
+        return nil;
+    }
+
+    const char *type = ivar_getTypeEncoding(ivar);
+
+    if (!type || type[0] != '@') {
+        CSLog([NSString stringWithFormat:
+               @"IVAR IS NOT AN OBJECT: %s | type: %s",
+               ivarName, type ?: "unknown"]);
+        return nil;
+    }
+
+    return object_getIvar(object, ivar);
+}
+
+static void CSLogIvarObject(id object,
+                            NSString *label,
+                            const char *ivarName) {
+    if (!object) {
+        CSLog([NSString stringWithFormat:@"%@: owner is NIL", label]);
+        return;
+    }
+
+    id value = CSGetObjectIvar(object, ivarName);
+
+    CSLog([NSString stringWithFormat:
+           @"%@ = %@",
+           label,
+           value ? [value description] : @"NIL"]);
+
+    if (value) {
+        CSLog([NSString stringWithFormat:
+               @"%@ class = %@",
+               label,
+               NSStringFromClass([value class])]);
+    }
+}
+
+// MARK: - Runtime Inspection
 
 static void CSInspectMethodList(Class cls,
                                 BOOL classMethods,
@@ -175,6 +242,8 @@ static void CSInspectClass(Class cls) {
     free(properties);
 }
 
+// MARK: - Scene Inspection
+
 static NSArray *CSObjectsFromCollection(id collection) {
     if (!collection) return @[];
 
@@ -224,11 +293,53 @@ static void CSInspectSceneObject(id object, NSUInteger index) {
                         @selector(foregroundScenes));
 }
 
+// MARK: - Spotlight Process Identity
+
+static void CSInspectProcessIdentity(void) {
+    Class managerClass =
+        NSClassFromString(@"SPUISpotlightSceneManager");
+
+    if (!managerClass) {
+        CSLog(@"Process identity: manager class unavailable");
+        return;
+    }
+
+    SEL identitySelector = @selector(spotlightProcessIdentity);
+
+    if (![managerClass respondsToSelector:identitySelector]) {
+        CSLog(@"spotlightProcessIdentity selector unavailable");
+        return;
+    }
+
+    CSLog(@"Calling spotlightProcessIdentity");
+
+    id identity =
+        ((id (*)(id, SEL))objc_msgSend)(
+            managerClass,
+            identitySelector
+        );
+
+    CSLog([NSString stringWithFormat:
+           @"Spotlight process identity: %@",
+           identity ? [identity description] : @"NIL"]);
+
+    if (identity) {
+        CSLog([NSString stringWithFormat:
+               @"Process identity class: %@",
+               NSStringFromClass([identity class])]);
+    }
+}
+
+// MARK: - Manager Inspection
+
 static void CSInspectManagerDependencies(id manager) {
     CSLog(@"========== MANAGER DEPENDENCIES ==========");
 
     CSLogObjectProperty(manager, @"delegate",
                         @selector(delegate));
+
+    // The getter may not exist. Inspect the actual ivar instead.
+    CSLogIvarObject(manager, @"_appService ivar", "_appService");
 
     CSLogObjectProperty(manager, @"appService",
                         @selector(appService));
@@ -321,6 +432,8 @@ static void CSInspectManagerState(void) {
     CSLog(@"========== SPOTLIGHT STATE END ==========");
 }
 
+// MARK: - Delayed Inspection
+
 static void CSScheduleStateInspection(void) {
     NSArray *delays = @[@1, @3, @6];
 
@@ -340,8 +453,10 @@ static void CSScheduleStateInspection(void) {
     }
 }
 
+// MARK: - Initial Inspection
+
 static void CSInspectSpotlight(void) {
-    CSLog(@"Starting 0.1.5 runtime inspection");
+    CSLog(@"Starting 0.1.6 runtime inspection");
 
     if (!CSLoadSpotlightFramework()) return;
 
@@ -394,8 +509,12 @@ static void CSInspectSpotlight(void) {
         }
     }
 
+    CSInspectProcessIdentity();
+
     CSLog(@"Runtime inspection finished");
 }
+
+// MARK: - Native Spotlight Request
 
 static BOOL CSRequestNativeSpotlight(void) {
     CSLog(@"Requesting native Spotlight");
@@ -436,6 +555,10 @@ static BOOL CSRequestNativeSpotlight(void) {
         return NO;
     }
 
+    CSLog(@"Inspecting manager before launch");
+    CSInspectManagerDependencies(manager);
+    CSInspectProcessIdentity();
+
     CSLog(@"Calling native launch method");
 
     ((void (*)(id, SEL, BOOL))objc_msgSend)(
@@ -445,12 +568,15 @@ static BOOL CSRequestNativeSpotlight(void) {
     );
 
     CSLog(@"Native launch method returned");
+
     CSScheduleStateInspection();
 
     CSLog(@"UI presentation remains unverified");
 
     return YES;
 }
+
+// MARK: - Manual Trigger
 
 static void CSInstallManualTrigger(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -513,9 +639,11 @@ static void CSInstallManualTrigger(void) {
     CSLog(@"Manual trigger installed");
 }
 
+// MARK: - Constructor
+
 %ctor {
     @autoreleasepool {
-        CSLog(@"Nyxian Spotlight 0.1.5 LOADED");
+        CSLog(@"Nyxian Spotlight 0.1.6 LOADED");
 
         CSLog([NSString stringWithFormat:
                @"Process: %@",
