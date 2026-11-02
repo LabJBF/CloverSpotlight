@@ -10,26 +10,21 @@
 static NSString *const kLogPath =
     @"/var/mobile/Library/Logs/CloverSpotlight.log";
 
+static NSString *const kTriggerPath =
+    @"/var/mobile/Library/CloverSpotlight/launch";
+
 // MARK: - Logging
 
 static void CSLog(NSString *message) {
-    NSFileManager *fileManager =
-        [NSFileManager defaultManager];
+    NSFileManager *fm = [NSFileManager defaultManager];
 
     NSString *directory =
         [kLogPath stringByDeletingLastPathComponent];
 
-    NSError *directoryError = nil;
-
-    [fileManager createDirectoryAtPath:directory
-          withIntermediateDirectories:YES
-                           attributes:nil
-                                error:&directoryError];
-
-    if (directoryError) {
-        NSLog(@"[CloverSpotlight] Log directory error: %@",
-              directoryError);
-    }
+    [fm createDirectoryAtPath:directory
+  withIntermediateDirectories:YES
+                   attributes:nil
+                        error:nil];
 
     NSString *entry = [NSString stringWithFormat:
         @"[%@] %@\n",
@@ -41,20 +36,18 @@ static void CSLog(NSString *message) {
         [NSFileHandle fileHandleForWritingAtPath:kLogPath];
 
     if (!file) {
-        [fileManager createFileAtPath:kLogPath
-                             contents:nil
-                           attributes:nil];
+        [fm createFileAtPath:kLogPath
+                    contents:nil
+                  attributes:nil];
 
         file = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
     }
 
     if (file) {
         [file seekToEndOfFile];
-
         [file writeData:
             [entry dataUsingEncoding:NSUTF8StringEncoding]
         ];
-
         [file closeFile];
     }
 
@@ -80,7 +73,7 @@ static BOOL CSLoadSpotlightFramework(void) {
             const char *error = dlerror();
 
             CSLog([NSString stringWithFormat:
-                @"SpotlightUI loading failed: %s",
+                @"Framework loading failed: %s",
                 error ?: "Unknown error"
             ]);
         }
@@ -89,13 +82,13 @@ static BOOL CSLoadSpotlightFramework(void) {
     return loaded;
 }
 
-// MARK: - Native Spotlight Request
+// MARK: - Native Spotlight
 
 static BOOL CSRequestNativeSpotlight(void) {
-    CSLog(@"Native Spotlight launch requested");
+    CSLog(@"Attempting native Spotlight launch");
 
     if (!CSLoadSpotlightFramework()) {
-        CSLog(@"Framework unavailable");
+        CSLog(@"Launch aborted: framework unavailable");
         return NO;
     }
 
@@ -103,14 +96,14 @@ static BOOL CSRequestNativeSpotlight(void) {
         NSClassFromString(@"SPUISpotlightSceneManager");
 
     if (!managerClass) {
-        CSLog(@"SceneManager unavailable");
+        CSLog(@"Launch aborted: SceneManager unavailable");
         return NO;
     }
 
     SEL sharedSelector = @selector(sharedManager);
 
     if (![managerClass respondsToSelector:sharedSelector]) {
-        CSLog(@"sharedManager selector unavailable");
+        CSLog(@"Launch aborted: sharedManager unavailable");
         return NO;
     }
 
@@ -121,7 +114,7 @@ static BOOL CSRequestNativeSpotlight(void) {
         );
 
     if (!manager) {
-        CSLog(@"sharedManager returned nil");
+        CSLog(@"Launch aborted: manager returned nil");
         return NO;
     }
 
@@ -129,9 +122,11 @@ static BOOL CSRequestNativeSpotlight(void) {
         @selector(launchSpotlightIfNeededWithForegroundPriority:);
 
     if (![manager respondsToSelector:launchSelector]) {
-        CSLog(@"Native launch selector unavailable");
+        CSLog(@"Launch aborted: launch selector unavailable");
         return NO;
     }
+
+    CSLog(@"Invoking native launch selector");
 
     ((void (*)(id, SEL, BOOL))objc_msgSend)(
         manager,
@@ -139,9 +134,80 @@ static BOOL CSRequestNativeSpotlight(void) {
         YES
     );
 
-    CSLog(@"Native Spotlight launch method invoked");
+    CSLog(@"Native launch selector returned");
 
     return YES;
+}
+
+// MARK: - Manual Trigger
+
+static void CSInstallManualTrigger(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    NSString *directory =
+        [kTriggerPath stringByDeletingLastPathComponent];
+
+    NSError *error = nil;
+
+    [fm createDirectoryAtPath:directory
+  withIntermediateDirectories:YES
+                   attributes:nil
+                        error:&error];
+
+    if (error) {
+        CSLog([NSString stringWithFormat:
+            @"Trigger directory error: %@",
+            error
+        ]);
+        return;
+    }
+
+    CSLog(@"Manual trigger installed");
+    CSLog([NSString stringWithFormat:
+        @"Waiting for trigger file: %@",
+        kTriggerPath
+    ]);
+
+    dispatch_source_t timer =
+        dispatch_source_create(
+            DISPATCH_SOURCE_TYPE_TIMER,
+            0,
+            0,
+            dispatch_get_main_queue()
+        );
+
+    if (!timer) {
+        CSLog(@"Could not create trigger timer");
+        return;
+    }
+
+    dispatch_source_set_timer(
+        timer,
+        dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+        NSEC_PER_SEC,
+        100 * NSEC_PER_MSEC
+    );
+
+    dispatch_source_set_event_handler(timer, ^{
+        if (![fm fileExistsAtPath:kTriggerPath]) {
+            return;
+        }
+
+        CSLog(@"Manual launch trigger detected");
+
+        [fm removeItemAtPath:kTriggerPath error:nil];
+
+        dispatch_source_cancel(timer);
+
+        BOOL result = CSRequestNativeSpotlight();
+
+        CSLog(result
+            ? @"Launch method invocation completed"
+            : @"Launch method invocation failed"
+        );
+    });
+
+    dispatch_resume(timer);
 }
 
 // MARK: - Diagnostics
@@ -150,7 +216,7 @@ static void CSInspectSpotlight(void) {
     CSLog(@"Starting Spotlight diagnostics");
 
     if (!CSLoadSpotlightFramework()) {
-        CSLog(@"Diagnostics stopped: framework unavailable");
+        CSLog(@"Diagnostics stopped");
         return;
     }
 
@@ -175,48 +241,41 @@ static void CSInspectSpotlight(void) {
     Class managerClass =
         NSClassFromString(@"SPUISpotlightSceneManager");
 
-    if (!managerClass) {
-        CSLog(@"SceneManager unavailable");
-        return;
-    }
+    if (managerClass) {
+        SEL sharedSelector = @selector(sharedManager);
 
-    SEL sharedSelector = @selector(sharedManager);
-
-    BOOL hasSharedManager =
-        [managerClass respondsToSelector:sharedSelector];
-
-    CSLog([NSString stringWithFormat:
-        @"sharedManager: %@",
-        hasSharedManager ? @"AVAILABLE" : @"NOT FOUND"
-    ]);
-
-    if (hasSharedManager) {
-        id manager =
-            ((id (*)(id, SEL))objc_msgSend)(
-                managerClass,
-                sharedSelector
-            );
+        BOOL available =
+            [managerClass respondsToSelector:sharedSelector];
 
         CSLog([NSString stringWithFormat:
-            @"Manager instance: %@",
-            manager ? @"AVAILABLE" : @"NIL"
+            @"sharedManager: %@",
+            available ? @"AVAILABLE" : @"NOT FOUND"
         ]);
 
-        SEL launchSelector =
-            @selector(launchSpotlightIfNeededWithForegroundPriority:);
+        if (available) {
+            id manager =
+                ((id (*)(id, SEL))objc_msgSend)(
+                    managerClass,
+                    sharedSelector
+                );
 
-        CSLog([NSString stringWithFormat:
-            @"Native launch selector: %@",
-            [manager respondsToSelector:launchSelector]
-                ? @"AVAILABLE"
-                : @"NOT FOUND"
-        ]);
+            CSLog([NSString stringWithFormat:
+                @"Manager instance: %@",
+                manager ? @"AVAILABLE" : @"NIL"
+            ]);
+
+            SEL launchSelector =
+                @selector(launchSpotlightIfNeededWithForegroundPriority:);
+
+            CSLog([NSString stringWithFormat:
+                @"Native launch selector: %@",
+                [manager respondsToSelector:launchSelector]
+                    ? @"AVAILABLE"
+                    : @"NOT FOUND"
+            ]);
+        }
     }
 
-    // Reference without executing the launch function.
-    (void)&CSRequestNativeSpotlight;
-
-    CSLog(@"Native Spotlight request function is ready");
     CSLog(@"Spotlight diagnostics finished");
 }
 
@@ -224,7 +283,7 @@ static void CSInspectSpotlight(void) {
 
 %ctor {
     @autoreleasepool {
-        CSLog(@"CloverSpotlight 0.1.1 LOADED");
+        CSLog(@"CloverSpotlight 0.1.2 LOADED");
 
         CSLog([NSString stringWithFormat:
             @"Process: %@",
@@ -232,5 +291,6 @@ static void CSInspectSpotlight(void) {
         ]);
 
         CSInspectSpotlight();
+        CSInstallManualTrigger();
     }
 }
