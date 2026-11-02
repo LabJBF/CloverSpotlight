@@ -74,23 +74,45 @@ static id CSGetObjectProperty(id object, SEL selector) {
 static void CSLogObjectProperty(id object,
                                 NSString *label,
                                 SEL selector) {
+    if (!object) {
+        CSLog([NSString stringWithFormat:@"%@: owner is NIL", label]);
+        return;
+    }
+
+    if (![object respondsToSelector:selector]) {
+        CSLog([NSString stringWithFormat:@"%@: selector unavailable", label]);
+        return;
+    }
+
     id value = CSGetObjectProperty(object, selector);
 
     CSLog([NSString stringWithFormat:
            @"%@ = %@",
            label,
            value ? [value description] : @"NIL"]);
+
+    if (value) {
+        CSLog([NSString stringWithFormat:
+               @"%@ class = %@",
+               label,
+               NSStringFromClass([value class])]);
+    }
 }
 
-static void CSInspectClass(Class cls) {
+static void CSInspectMethodList(Class cls,
+                                BOOL classMethods,
+                                NSString *label) {
     if (!cls) return;
 
-    CSLog([NSString stringWithFormat:
-           @"===== CLASS: %@ =====", NSStringFromClass(cls)]);
+    Class target = classMethods ? object_getClass(cls) : cls;
 
     unsigned int count = 0;
+    Method *methods = class_copyMethodList(target, &count);
 
-    Method *methods = class_copyMethodList(cls, &count);
+    CSLog([NSString stringWithFormat:
+           @"--- %@ METHODS: %@ ---",
+           label,
+           classMethods ? @"CLASS" : @"INSTANCE"]);
 
     for (unsigned int i = 0; i < count; i++) {
         SEL selector = method_getName(methods[i]);
@@ -103,7 +125,10 @@ static void CSInspectClass(Class cls) {
             [name localizedCaseInsensitiveContainsString:@"launch"] ||
             [name localizedCaseInsensitiveContainsString:@"present"] ||
             [name localizedCaseInsensitiveContainsString:@"foreground"] ||
-            [name localizedCaseInsensitiveContainsString:@"create"]) {
+            [name localizedCaseInsensitiveContainsString:@"create"] ||
+            [name localizedCaseInsensitiveContainsString:@"init"] ||
+            [name localizedCaseInsensitiveContainsString:@"delegate"] ||
+            [name localizedCaseInsensitiveContainsString:@"service"]) {
 
             CSLog([NSString stringWithFormat:
                    @"METHOD: %@ | encoding: %s",
@@ -112,6 +137,18 @@ static void CSInspectClass(Class cls) {
     }
 
     free(methods);
+}
+
+static void CSInspectClass(Class cls) {
+    if (!cls) return;
+
+    CSLog([NSString stringWithFormat:
+           @"===== CLASS: %@ =====", NSStringFromClass(cls)]);
+
+    CSInspectMethodList(cls, NO, NSStringFromClass(cls));
+    CSInspectMethodList(cls, YES, NSStringFromClass(cls));
+
+    unsigned int count = 0;
 
     Ivar *ivars = class_copyIvarList(cls, &count);
 
@@ -187,6 +224,33 @@ static void CSInspectSceneObject(id object, NSUInteger index) {
                         @selector(foregroundScenes));
 }
 
+static void CSInspectManagerDependencies(id manager) {
+    CSLog(@"========== MANAGER DEPENDENCIES ==========");
+
+    CSLogObjectProperty(manager, @"delegate",
+                        @selector(delegate));
+
+    CSLogObjectProperty(manager, @"appService",
+                        @selector(appService));
+
+    CSLogObjectProperty(manager, @"layoutMonitor",
+                        @selector(layoutMonitor));
+
+    CSLogObjectProperty(manager, @"watchdogTimer",
+                        @selector(watchdogTimer));
+
+    CSLogObjectProperty(manager, @"initializationAssertions",
+                        @selector(initializationAssertions));
+
+    CSLogObjectProperty(manager, @"backgroundingAssertions",
+                        @selector(backgroundingAssertions));
+
+    CSLogObjectProperty(manager, @"queue",
+                        @selector(queue));
+
+    CSLog(@"========== DEPENDENCIES END ==========");
+}
+
 static void CSInspectManagerState(void) {
     CSLog(@"========== SPOTLIGHT STATE BEGIN ==========");
 
@@ -252,6 +316,8 @@ static void CSInspectManagerState(void) {
         CSInspectSceneObject(foreground[i], i);
     }
 
+    CSInspectManagerDependencies(manager);
+
     CSLog(@"========== SPOTLIGHT STATE END ==========");
 }
 
@@ -275,7 +341,7 @@ static void CSScheduleStateInspection(void) {
 }
 
 static void CSInspectSpotlight(void) {
-    CSLog(@"Starting extended Spotlight inspection");
+    CSLog(@"Starting 0.1.5 runtime inspection");
 
     if (!CSLoadSpotlightFramework()) return;
 
@@ -316,6 +382,8 @@ static void CSInspectSpotlight(void) {
                manager ? NSStringFromClass([manager class]) : @"NIL"]);
 
         if (manager) {
+            CSInspectManagerDependencies(manager);
+
             SEL launchSelector =
                 @selector(launchSpotlightIfNeededWithForegroundPriority:);
 
@@ -326,7 +394,7 @@ static void CSInspectSpotlight(void) {
         }
     }
 
-    CSLog(@"Extended inspection finished");
+    CSLog(@"Runtime inspection finished");
 }
 
 static BOOL CSRequestNativeSpotlight(void) {
@@ -377,11 +445,9 @@ static BOOL CSRequestNativeSpotlight(void) {
     );
 
     CSLog(@"Native launch method returned");
-    CSLog(@"Scheduling post-launch state inspections");
-
     CSScheduleStateInspection();
 
-    CSLog(@"NOTE: UI presentation has not been verified");
+    CSLog(@"UI presentation remains unverified");
 
     return YES;
 }
@@ -449,7 +515,7 @@ static void CSInstallManualTrigger(void) {
 
 %ctor {
     @autoreleasepool {
-        CSLog(@"Nyxian Spotlight 0.1.4 LOADED");
+        CSLog(@"Nyxian Spotlight 0.1.5 LOADED");
 
         CSLog([NSString stringWithFormat:
                @"Process: %@",
