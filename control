@@ -1,9 +1,9 @@
-Package: com.macclover.cloverspotlight
-Name: CloverSpotlight
+Package: com.nyxian.spotlight
+Name: Nyxian Spotlight
 Version: 0.1.4
 Architecture: iphoneos-arm64
-Description: Native Spotlight launcher for iOS and iPadOS.
-Maintainer: Mac.Clover
-Author: Mac.Clover
+Description: Native Spotlight integration for the Switzach environment.
+Maintainer: Nyxian Community
+Author: Oldfriend
 Section: Tweaks
 Depends: mobilesubstrate
