@@ -1,6 +1,6 @@
 # Nyxian Spotlight
 
-**Nyxian Spotlight** is an experimental Theos/Logos tweak exploring native Spotlight integration in the SwitchZart environment.
+**Nyxian Spotlight** is an experimental Theos/Logos tweak exploring native Spotlight integration in the Switzach environment.
 
 The repository and tweak target are named **CloverSpotlight**; the Debian package is distributed as **Nyxian Spotlight** (\`com.nyxian.spotlight\`).
 
